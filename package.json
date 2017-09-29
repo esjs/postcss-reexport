@@ -1,0 +1,24 @@
+{
+  "name": "postcss-reexport",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/esjs/postcss-reexport.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/esjs/postcss-reexport/issues"
+  },
+  "homepage": "https://github.com/esjs/postcss-reexport#readme",
+  "devDependencies": {
+    "fs-extra": "^4.0.2",
+    "postcss": "^6.0.12"
+  }
+}
