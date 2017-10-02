@@ -2,21 +2,69 @@ const fs = require('fs-extra');
 const path = require('path');
 
 const postcss = require('postcss');
+var valueParser = require("postcss-value-parser");
+const stringify = valueParser.stringify;
 
-function insertMarkerBeforeFirstRule(nodes) {
+const emptyNode = postcss().process('/**/').root.nodes[0];
+
+function getImportData(node) {
+  var parsedParams = valueParser(node.params).nodes,
+      media = '';
+
+  if (parsedParams.length > 2) {
+    media = parsedParams.reduce((acc, val, index) => {
+      if (index < 2) return acc;
+
+      return acc + stringify(val);
+    }, '');
+  }
+  
+  return {
+    path: path.resolve(path.dirname(node.source.input.file), parsedParams[0].value),
+    media: media
+  };
+}
+
+function processEntryStyles(styles) {
   var curIndex = 0,
-      curNode = nodes[curIndex],
-      hasStart = false;
+      curNode = styles.nodes[curIndex],
+      requiredImports = [];
 
-  while(curNode && (curNode.type !== 'rule' || curNode.selector === ':root')) {
+  // import are allow only at the beggining file
+  // so we need to loop till there is an import statement
+  while(curNode && curNode.type === 'atrule' && curNode.name === 'import') {
+    requiredImports.push(getImportData(curNode));
     curIndex++;
-    curNode = nodes[curIndex];
-    continue;
+    curNode = styles.nodes[curIndex];
   }
 
+  styles.reexportRequiredImports = requiredImports;
+}
+
+function insertStartMarker(nodes) {
+  var curIndex = 0,
+      curNode = nodes[curIndex],
+      hasStart = false,
+      requiredImports = [];
+
+  // skip @import and :root rules
+  while(curNode && ((curNode.type === 'atrule' && curNode.name === 'import') || curNode.selector === ':root')) {
+    // add all import statements so we can restore them on export
+    if (curNode.type === 'atrule' && curNode.name === 'import') {
+      requiredImports.push(getImportData(curNode));
+    }
+    curIndex++;
+    curNode = nodes[curIndex];
+  }
+
+
   if (curNode) {
+    curNode.reexportRequiredImports = requiredImports;
+
     let contentStart = postcss()
         .process('.postcss-reexport[data-type="start"]{display: none;}\n').root.nodes[0];
+
+    curNode.parent.source.input
 
     // postcss-import will look for source in first node with type="media"
     contentStart.source = nodes[0].source;
@@ -28,8 +76,20 @@ function insertMarkerBeforeFirstRule(nodes) {
   return hasStart;
 }
 
+function findClosingPlaceholderIndex(nodes, startIndex) {
+  var endIndex = startIndex,
+      curNode = nodes[endIndex];
+
+  while(curNode.nodes[curNode.nodes.length - 1].selector !== '.postcss-reexport[data-type="end"]') {
+    endIndex++;
+    curNode = nodes[endIndex];
+  }
+  
+  return endIndex;
+}
+
 function addMarkers(styles) {
-  const hasStart = insertMarkerBeforeFirstRule(styles.nodes);
+  const hasStart = insertStartMarker(styles.nodes);
 
   if (!hasStart) return;
 
@@ -59,19 +119,24 @@ function extractNestedMediaRules(styles, extractMediaRule) {
   return styles;
 }
 
-function extractImportedBlocksRecursive(styles, options = { context: './', tempPath: './postcss-temp' }, parentFile = null) {
+function extractImportedBlocksRecursive(styles, options) {
   var extractIndexes = [];
   var curExtracIndex = {};
-  var stopExecution = false;
+
+  options = Object.assign({
+    context: './',
+    tempPath: './postcss-temp'
+  }, options);
+
+  var contextPath = path.resolve(process.cwd(), options.context);
+  var tempFolderPath = path.resolve(process.cwd(), options.tempPath);
 
   // TODO: clear temp directory on new build?
   // FIXME: this can cause problems when we have multiple entry points
   // var tempPath = path.resolve(process.cwd(), options.tempPath);
   // fs.emptyDirSync(tempPath);
-  
-  styles.nodes.forEach(function(node, index) {
-    if (stopExecution) return;
 
+  styles.nodes.forEach(function(node, index) {
     if (node.type === 'comment') return;
 
     if (node.type === 'atrule' && node.nodes[0].selector === '.postcss-reexport[data-type="start"]') {
@@ -109,36 +174,44 @@ function extractImportedBlocksRecursive(styles, options = { context: './', tempP
       if (styles.nodes.length === 1) {
         let extractedStyles = styles.nodes.splice(index, 1)[0];
 
-        parentFile = parentFile || extractedStyles.parent.source.input.file;
-        
-        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options, parentFile).nodes[0];
+        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options).nodes[0];
 
-        styles.nodes.splice(index, 0, extractedNode);
+        // TODO check that entry file recieves import statements
+        styles.nodes.splice(index, 0, extractedNode || emptyNode);
 
-      // check for case 2, but when it's not only import but has other rules
-      } else if (styles.nodes[0].type !== 'atrule') {
+      // check for case 2, when it's not only import but has other rules
+      } else if (node.nodes[0].selector === '.postcss-reexport[data-type="start"]' && node.nodes[node.nodes.length - 1].selector === '.postcss-reexport[data-type="end"]') {
         let extractedStyles = styles.nodes.splice(index, 1)[0];
 
         extractedStyles = extractNestedMediaRules(node, node.params);
 
-        parentFile = parentFile || extractedStyles.parent.source.input.file;
-
-        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options, parentFile).nodes[0];
+        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options).nodes[0];
         
-        styles.nodes.splice(index, 0, extractedNode);
+        // TODO check that entry file recieves import statements
+        styles.nodes.splice(index, 0, extractedNode || emptyNode);
       
       // check for case 2, when @import split to multiple statements
       } else {
-        let extractedStyles = extractNestedMediaRules(styles, styles.nodes[0].params);
-        parentFile = parentFile || styles.source.input.file;
-        extractImportedBlocksRecursive(extractedStyles, options, parentFile);
+        let endIndex = findClosingPlaceholderIndex(styles.nodes, index);
+
+        let sliceCount = endIndex - index + 1;
+        let extractedStyles = styles.nodes.splice(index, sliceCount);
+
+        // we need to add placeholder items to preserve forEach
+        // buy we add one item less because later we may need
+        // to add import statement
+        for (let i = 1; i < sliceCount; i++) {
+          styles.nodes.splice(index, 0, emptyNode);
+        }
+
+        // fake styles, will it work?
+        extractedStyles = extractNestedMediaRules({nodes: extractedStyles}, node.params);
         
-        // we need to shop execution, correct information for those rules
-        // will be processed in other call
-        stopExecution = true;
+        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options).nodes[0]; 
+
+        // TODO check that entry file recieves import statements
+        styles.nodes.splice(index, 0, extractedNode || emptyNode);
       }
-      
-      // extractedNode.source = parentFile;
     } else if (node.type === 'rule') {
       if (node.selector === '.postcss-reexport[data-type="start"]') {
         curExtracIndex = {
@@ -152,50 +225,82 @@ function extractImportedBlocksRecursive(styles, options = { context: './', tempP
   });
 
   let offset = 0;
-
+  
   extractIndexes.forEach((extracData, index) => {
     var sliceCount = extracData.end - extracData.start + 1;
-
+    
     var extractedStyles = styles.nodes
       // excract previously imported block
       .splice(extracData.start - offset, sliceCount);
-
-      // moreve start and end placeholders
+    
+    // remove start and end placeholders
     extractedStyles = extractedStyles.splice(1, extractedStyles.length - 2);
-
-    var curFile = extractedStyles[0].source.input.file;
-    var tempFolderPath = path.resolve(process.cwd(), options.tempPath);
-
-    parentFile = parentFile || extractedStyles[0].parent.source.input.file;
-
+    
     // TODO: better solution for wrong "\" direction
-    var relativePath  = path.relative(path.dirname(parentFile), tempFolderPath).replace(/\\/g, '/');
+    
+    var curFile = extractedStyles[0].source.input.file;
+    var contextRelativePath = path.relative(contextPath, path.dirname(curFile));
     var fileName = path.basename(curFile);
+    
+    // if it's import in entry file we need to replace block with @import statement
+    if (extractedStyles[0].reexportRequiredImports) {
+      extractedStyles[0].reexportRequiredImports.reverse().forEach(rule => {
+        let contextRelativePathLocal = path.relative(path.dirname(curFile), path.dirname(rule.path));
+        let fileName = path.basename(rule.path);
+        let node = postcss()
+          .process(`@import "${contextRelativePathLocal ? contextRelativePathLocal + '/' : './'}${fileName}" ${rule.media}`).root.nodes[0];
 
+        node.raws.semicolon = true;
+
+        // only add import if import target exist
+        // there can be no import target if consisted only fomr :root statement
+        if (!fs.pathExistsSync(path.resolve(tempFolderPath, contextRelativePath, fileName))) return;
+        
+        extractedStyles.unshift(node);
+
+        // styles.nodes.unshift(css.nodes[0]);
+        // offset--;
+      });
+    }
+
+    // TODO find proper way render with semicolons
     var extractedStylesContent = extractedStyles.reduce((acc, val) => {
-      return acc += val.toString();
+      var after = val.type === 'atrule' && val.name === 'import' ? ';' : '';
+      
+      return acc += val.toString() + after + '\n';
     }, '');
 
-    var media = styles.type === 'atrule' && styles.name === 'media' ? ' ' + styles.params : '';
-    
-    // TODO CSS media rule
-    var css = postcss()
-      .process(`@import url('${relativePath}/${fileName}')${media}`).root;
+    fs.outputFileSync(path.resolve(tempFolderPath, contextRelativePath, fileName), extractedStylesContent);
 
-    styles.nodes.splice(index, 0, css.nodes[0]);
-
-    fs.outputFileSync(path.resolve(process.cwd(), options.tempPath, fileName), extractedStylesContent);
-
-    offset += (sliceCount - 1);
+    offset += sliceCount;
   });
+
+  if (styles.reexportRequiredImports) {
+    styles.reexportRequiredImports.forEach(rule => {
+      var contextRelativePath = path.relative(contextPath, path.dirname(rule.path));
+      let importRelativePath = path.relative(path.dirname(rule.path), path.resolve(tempFolderPath, contextRelativePath)).replace(/\\/g, '/');
+      let fileName = path.basename(rule.path);
+
+      // only add import if import target exist
+      // there can be no import target if consisted only fomr :root statement
+      if (!fs.pathExistsSync(path.resolve(tempFolderPath, contextRelativePath, fileName))) return;
+
+      let node = postcss()
+        .process(`@import "${importRelativePath ? importRelativePath + '/' : './'}${fileName}" ${rule.media};`).root.nodes[0];
+
+      styles.nodes.unshift(node);
+    });
+  }
 
   return styles;
 }
 
 module.exports = postcss.plugin("postcss-reexport", function(options = {}) {
   return function(styles, result) {
-    if (options.isExport) {
+    if (options.export) {
       extractImportedBlocksRecursive(styles, options);
+    } else if (options.initial) {
+      processEntryStyles(styles);
     } else {
       addMarkers(styles)
     }
