@@ -131,11 +131,6 @@ function extractImportedBlocksRecursive(styles, options) {
   var contextPath = path.resolve(process.cwd(), options.context);
   var tempFolderPath = path.resolve(process.cwd(), options.tempPath);
 
-  // TODO: clear temp directory on new build?
-  // FIXME: this can cause problems when we have multiple entry points
-  // var tempPath = path.resolve(process.cwd(), options.tempPath);
-  // fs.emptyDirSync(tempPath);
-
   styles.nodes.forEach(function(node, index) {
     if (node.type === 'comment') return;
 
