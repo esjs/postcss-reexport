@@ -57,6 +57,16 @@ function insertStartMarker(nodes) {
     curNode = nodes[curIndex];
   }
 
+  // In case if module contains only imports we need to add at least one rule
+  // otherwise module will be removed and won't be able to restore imports
+  if (!curNode && requiredImports.length) {
+    curNode = emptyNode.clone();
+
+    // source required to properly output module content
+    curNode.source = nodes[0].source;
+
+    nodes.push(curNode);
+  }
 
   if (curNode) {
     curNode.reexportRequiredImports = requiredImports;
@@ -64,13 +74,12 @@ function insertStartMarker(nodes) {
     let contentStart = postcss()
         .process('.postcss-reexport[data-type="start"]{display: none;}\n').root.nodes[0];
 
-    curNode.parent.source.input
-
     // postcss-import will look for source in first node with type="media"
     contentStart.source = nodes[0].source;
 
     nodes.splice(curIndex, 0, contentStart);
     hasStart = true;
+
   }
 
   return hasStart;
@@ -220,10 +229,10 @@ function extractImportedBlocksRecursive(styles, options) {
   });
 
   let offset = 0;
-  
+
   extractIndexes.forEach((extracData, index) => {
     var sliceCount = extracData.end - extracData.start + 1;
-    
+
     var extractedStyles = styles.nodes
       // excract previously imported block
       .splice(extracData.start - offset, sliceCount);
@@ -232,7 +241,6 @@ function extractImportedBlocksRecursive(styles, options) {
     extractedStyles = extractedStyles.splice(1, extractedStyles.length - 2);
     
     // TODO: better solution for wrong "\" direction
-    
     var curFile = extractedStyles[0].source.input.file;
     var contextRelativePath = path.relative(contextPath, path.dirname(curFile));
     var fileName = path.basename(curFile);
