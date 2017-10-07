@@ -2,8 +2,10 @@ const fs = require('fs-extra');
 const path = require('path');
 
 const postcss = require('postcss');
-var valueParser = require("postcss-value-parser");
+const valueParser = require("postcss-value-parser");
 const stringify = valueParser.stringify;
+
+const postcssUrl = require('postcss-url');
 
 const emptyNode = postcss().process('/**/').root.nodes[0];
 
@@ -266,6 +268,21 @@ function extractImportedBlocksRecursive(styles, options) {
       });
     }
 
+
+    let extractPath = path.resolve(tempFolderPath, contextRelativePath, fileName);
+
+    // fix URLs for temp files
+    extractedStyles = extractedStyles.map(style => {
+      return postcss()
+        .use(postcssUrl({
+          url: "rebase"
+        }))
+        .process(style, {
+          from: style.source.input.file,
+          to: extractPath
+        }).root.nodes[0];
+    })
+
     // TODO find proper way render with semicolons
     var extractedStylesContent = extractedStyles.reduce((acc, val) => {
       var after = val.type === 'atrule' && val.name === 'import' ? ';' : '';
@@ -273,7 +290,7 @@ function extractImportedBlocksRecursive(styles, options) {
       return acc += val.toString() + after + '\n';
     }, '');
 
-    fs.outputFileSync(path.resolve(tempFolderPath, contextRelativePath, fileName), extractedStylesContent);
+    fs.outputFileSync(extractPath, extractedStylesContent);
 
     offset += sliceCount;
   });
