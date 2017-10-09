@@ -145,7 +145,7 @@ function extractImportedBlocksRecursive(styles, options) {
   styles.nodes.forEach(function(node, index) {
     if (node.type === 'comment') return;
 
-    if (node.type === 'atrule' && node.nodes[0].selector === '.postcss-reexport[data-type="start"]') {
+    if (node.type === 'atrule' && Array.isArray(node.nodes) && node.nodes.length &&  node.nodes[0].selector === '.postcss-reexport[data-type="start"]') {
       /*
         when original import has media rules
           Example: @import url('../components/gallery.css') print;
