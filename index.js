@@ -250,16 +250,17 @@ function extractImportedBlocksRecursive(styles, options) {
     // if it's import in entry file we need to replace block with @import statement
     if (extractedStyles[0].reexportRequiredImports) {
       extractedStyles[0].reexportRequiredImports.reverse().forEach(rule => {
-        let contextRelativePathLocal = path.relative(path.dirname(curFile), path.dirname(rule.path));
+        let contextRelativePathImport = path.relative(path.dirname(curFile), path.dirname(rule.path)).replace(/\\/g, '/');
+        let contextRelativePathLocal = path.relative(contextPath, path.dirname(rule.path));
         let fileName = path.basename(rule.path);
         let node = postcss()
-          .process(`@import "${contextRelativePathLocal ? contextRelativePathLocal + '/' : './'}${fileName}" ${rule.media}`).root.nodes[0];
+          .process(`@import "${contextRelativePathImport ? contextRelativePathImport + '/' : './'}${fileName}" ${rule.media}`).root.nodes[0];
 
         node.raws.semicolon = true;
 
         // only add import if import target exist
         // there can be no import target if consisted only fomr :root statement
-        if (!fs.pathExistsSync(path.resolve(tempFolderPath, contextRelativePath, fileName))) return;
+        if (!fs.pathExistsSync(path.resolve(tempFolderPath, contextRelativePathLocal, fileName))) return;
         
         extractedStyles.unshift(node);
 
@@ -296,7 +297,7 @@ function extractImportedBlocksRecursive(styles, options) {
   });
 
   if (styles.reexportRequiredImports) {
-    styles.reexportRequiredImports.forEach(rule => {
+    styles.reexportRequiredImports.reverse().forEach(rule => {
       var contextRelativePath = path.relative(contextPath, path.dirname(rule.path));
       let importRelativePath = path.relative(path.dirname(rule.path), path.resolve(tempFolderPath, contextRelativePath)).replace(/\\/g, '/');
       let fileName = path.basename(rule.path);
