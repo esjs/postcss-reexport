@@ -299,8 +299,8 @@ function extractImportedBlocksRecursive(styles, options) {
   if (styles.reexportRequiredImports) {
     styles.reexportRequiredImports.reverse().forEach(rule => {
       var contextRelativePath = path.relative(contextPath, path.dirname(rule.path));
-      let importRelativePath = path.relative(path.dirname(rule.path), path.resolve(tempFolderPath, contextRelativePath)).replace(/\\/g, '/');
       let fileName = path.basename(rule.path);
+      let importRelativePath = path.relative(path.dirname(styles.source.input.file), path.resolve(tempFolderPath,contextRelativePath)).replace(/\\/g, '/');
 
       // only add import if import target exist
       // there can be no import target if consisted only fomr :root statement
