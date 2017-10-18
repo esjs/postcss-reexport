@@ -2,6 +2,7 @@ const fs = require('fs-extra');
 const path = require('path');
 
 const postcss = require('postcss');
+const postcssRoot = require('postcss/lib/root');
 const valueParser = require("postcss-value-parser");
 const stringify = valueParser.stringify;
 
@@ -23,6 +24,7 @@ function getImportData(node) {
   
   return {
     path: path.resolve(path.dirname(node.source.input.file), parsedParams[0].value),
+    source: node.source,
     media: media
   };
 }
@@ -130,7 +132,7 @@ function extractNestedMediaRules(styles, extractMediaRule) {
   return styles;
 }
 
-function extractImportedBlocksRecursive(styles, options) {
+function extractImportedBlocksRecursive(styles, options, result) {
   var extractIndexes = [];
   var curExtracIndex = {};
 
@@ -180,7 +182,7 @@ function extractImportedBlocksRecursive(styles, options) {
       if (styles.nodes.length === 1) {
         let extractedStyles = styles.nodes.splice(index, 1)[0];
 
-        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options).nodes[0];
+        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options, result).nodes[0];
 
         // TODO check that entry file recieves import statements
         styles.nodes.splice(index, 0, extractedNode || emptyNode);
@@ -191,7 +193,7 @@ function extractImportedBlocksRecursive(styles, options) {
 
         extractedStyles = extractNestedMediaRules(node, node.params);
 
-        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options).nodes[0];
+        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options, result).nodes[0];
         
         // TODO check that entry file recieves import statements
         styles.nodes.splice(index, 0, extractedNode || emptyNode);
@@ -213,7 +215,7 @@ function extractImportedBlocksRecursive(styles, options) {
         // fake styles, will it work?
         extractedStyles = extractNestedMediaRules({nodes: extractedStyles}, node.params);
         
-        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options).nodes[0]; 
+        let extractedNode = extractImportedBlocksRecursive(extractedStyles, options, result).nodes[0]; 
 
         // TODO check that entry file recieves import statements
         styles.nodes.splice(index, 0, extractedNode || emptyNode);
@@ -242,7 +244,6 @@ function extractImportedBlocksRecursive(styles, options) {
     // remove start and end placeholders
     extractedStyles = extractedStyles.splice(1, extractedStyles.length - 2);
     
-    // TODO: better solution for wrong "\" direction
     var curFile = extractedStyles[0].source.input.file;
     var contextRelativePath = path.relative(contextPath, path.dirname(curFile));
     var fileName = path.basename(curFile);
@@ -261,6 +262,8 @@ function extractImportedBlocksRecursive(styles, options) {
         // only add import if import target exist
         // there can be no import target if consisted only fomr :root statement
         if (!fs.pathExistsSync(path.resolve(tempFolderPath, contextRelativePathLocal, fileName))) return;
+
+        node.source = rule.source;
         
         extractedStyles.unshift(node);
 
@@ -269,29 +272,34 @@ function extractImportedBlocksRecursive(styles, options) {
       });
     }
 
-
     let extractPath = path.resolve(tempFolderPath, contextRelativePath, fileName);
 
+    let extractedRoot = new postcssRoot();
+
+    extractedStyles.forEach(style => {
+      style.parent = null;
+      extractedRoot.append(style);
+    });
+
     // fix URLs for temp files
-    extractedStyles = extractedStyles.map(style => {
-      return postcss()
-        .use(postcssUrl({
-          url: "rebase"
-        }))
-        .process(style, {
-          from: style.source.input.file,
-          to: extractPath
-        }).root.nodes[0];
-    })
+    extractedRoot = postcss()
+      .use(postcssUrl({
+        url: "rebase"
+      }))
+      .process(extractedRoot, {
+        from: extractedStyles[0].source.input.file,
+        to: extractPath,
+        map: result.opts.map // use source maps setting from original config
+      });
 
-    // TODO find proper way render with semicolons
-    var extractedStylesContent = extractedStyles.reduce((acc, val) => {
-      var after = val.type === 'atrule' && val.name === 'import' ? ';' : '';
-      
-      return acc += val.toString() + after + '\n';
-    }, '');
+    var extractedStylesContent = extractedRoot.stringify();
 
-    fs.outputFileSync(extractPath, extractedStylesContent);
+    fs.outputFileSync(extractPath, extractedStylesContent.css);
+
+    // when sourceMaps are inline or turned off
+    if (extractedStylesContent.map) {
+      fs.outputFileSync(extractPath + '.map', extractedStylesContent.map.toString());
+    }
 
     offset += sliceCount;
   });
@@ -309,7 +317,9 @@ function extractImportedBlocksRecursive(styles, options) {
       let node = postcss()
         .process(`@import "${importRelativePath ? importRelativePath + '/' : './'}${fileName}" ${rule.media};`).root.nodes[0];
 
-      styles.nodes.unshift(node);
+      node.source = rule.source;
+
+      styles.prepend(node);
     });
   }
 
@@ -319,7 +329,7 @@ function extractImportedBlocksRecursive(styles, options) {
 module.exports = postcss.plugin("postcss-reexport", function(options = {}) {
   return function(styles, result) {
     if (options.export) {
-      extractImportedBlocksRecursive(styles, options);
+      extractImportedBlocksRecursive(styles, options, result);
     } else if (options.initial) {
       processEntryStyles(styles);
     } else {

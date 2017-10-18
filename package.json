@@ -1,6 +1,6 @@
 {
   "name": "postcss-reexport",
-  "version": "0.1.7",
+  "version": "0.2.1",
   "description": "",
   "main": "index.js",
   "scripts": {
