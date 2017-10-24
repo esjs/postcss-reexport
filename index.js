@@ -1,5 +1,6 @@
 const fs = require('fs-extra');
 const path = require('path');
+const crypto = require('crypto');
 
 const postcss = require('postcss');
 const postcssRoot = require('postcss/lib/root');
@@ -9,6 +10,8 @@ const stringify = valueParser.stringify;
 const postcssUrl = require('postcss-url');
 
 const emptyNode = postcss().process('/**/').root.nodes[0];
+
+var postcssReexportCache = {};
 
 function getImportData(node) {
   var parsedParams = valueParser(node.params).nodes,
@@ -294,11 +297,20 @@ function extractImportedBlocksRecursive(styles, options, result) {
 
     var extractedStylesContent = extractedRoot.stringify();
 
-    fs.outputFileSync(extractPath, extractedStylesContent.css);
+    var hash = crypto.createHash('md5').update(extractedRoot.toString()).digest('hex');
+    var cacheInstance = postcssReexportCache[extractPath];
+    
+    // required to prevent infinite build loop
+    // for webpack when in watch mode
+    if (!cacheInstance || cacheInstance !== hash) {
+      postcssReexportCache[extractPath] = hash;
 
-    // when sourceMaps are inline or turned off
-    if (extractedStylesContent.map) {
-      fs.outputFileSync(extractPath + '.map', extractedStylesContent.map.toString());
+      fs.outputFileSync(extractPath, extractedStylesContent.css);
+
+      // when sourceMaps are inline or turned off
+      if (extractedStylesContent.map) {
+        fs.outputFileSync(extractPath + '.map', extractedStylesContent.map.toString());
+      }
     }
 
     offset += sliceCount;
