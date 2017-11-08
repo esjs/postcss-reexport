@@ -302,8 +302,20 @@ function extractImportedBlocksRecursive(styles, options, result) {
     
     // required to prevent infinite build loop
     // for webpack when in watch mode
-    if (!cacheInstance || cacheInstance !== hash) {
-      postcssReexportCache[extractPath] = hash;
+    // IMPORTANT this will allow file to be rewriten up to 2 times
+    // to handle file rebuild by extract text webpack plugin
+    // otherwise changes not each time
+    if (!cacheInstance || cacheInstance.hash !== hash || cacheInstance.rebuildFlag) {
+      if (postcssReexportCache[extractPath] && postcssReexportCache[extractPath].rebuildFlag) {
+        postcssReexportCache[extractPath].rebuildFlag = false;
+      }
+      
+      if (!cacheInstance || cacheInstance.hash !== hash) {
+        postcssReexportCache[extractPath] = {
+          hash: hash,
+          rebuildFlag: !!cacheInstance,
+        };
+      }
 
       fs.outputFileSync(extractPath, extractedStylesContent.css);
 
