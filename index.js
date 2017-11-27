@@ -309,12 +309,14 @@ function extractImportedBlocksRecursive(styles, options, result) {
         };
       }
 
-      fs.outputFileSync(extractPath, extractedStylesContent.css);
-
       // when sourceMaps are inline or turned off
       if (extractedStylesContent.map) {
+        extractedStylesContent.css += `\r\n/*# sourceMappingURL=${path.basename(fileName, '.css')}.css.map */`;
+        
         fs.outputFileSync(extractPath + '.map', extractedStylesContent.map.toString());
       }
+
+      fs.outputFileSync(extractPath, extractedStylesContent.css);
     }
 
     offset += sliceCount;
